@@ -171,7 +171,7 @@ def _indexar_carpeta(directorio, log_fn):
         try:
             meta  = json.loads(Path(json_path).read_text(encoding="utf-8"))
             texto = limpiar_vtt(Path(sub_path).read_text(encoding="utf-8"))
-            if len(texto) < 100:
+            if len(texto) < 300:  # Shorts y videos muy cortos tienen poco texto
                 skip += 1
                 continue
             con.execute("INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?,?,?)", (
@@ -217,6 +217,7 @@ def procesar(urls_texto):
         yield e(f"\n📡  [{i}/{len(urls)}] {url}")
         cmd = ["yt-dlp","--skip-download","--write-auto-subs","--sub-lang","es",
                "--write-info-json","--ignore-errors","--newline",
+               "--match-filter", "duration > 60",
                "--output", f"{DIRECTORIO}/%(channel)s/%(upload_date)s_%(id)s_%(title)s.%(ext)s", url]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
