@@ -1,14 +1,13 @@
-﻿"""
-astro_corpus_ui.py  v3
+"""
+astro_corpus_ui.py  v4
 ----------------------
-Soporte VTT y SRT. Streaming real con Popen.
-Sin gr.Progress (causa crash). Boton reindexar.
-
-    pip install yt-dlp chromadb sentence-transformers gradio
-    python astro_corpus_ui.py
+- Startup self-check integrado: valida BD, modelo y retrieval al arrancar
+- normalize_embeddings=True en TODOS los encode (query e indexado)
+- get_collection en lugar de get_or_create_collection
+- Puerto fijo 7860
 """
 
-import subprocess, json, os, re, glob, sqlite3
+import subprocess, json, os, re, glob, sqlite3, sys
 from pathlib import Path
 import gradio as gr
 from unidecode import unidecode
@@ -25,8 +24,70 @@ CHUNK_OVERLAP= 50
 LM_STUDIO    = "http://127.0.0.1:1234/v1/chat/completions"
 LM_MODEL     = "qwen3-coder-30b-a3b-instruct"
 RAG_TOP_K    = 8
+PORT         = 7860
 
 
+# ═══════════════════════════════════════════════════════════
+#  STARTUP SELF-CHECK
+# ═══════════════════════════════════════════════════════════
+def startup_check():
+    """Valida BD, modelo y retrieval al arrancar. Aborta si algo falla."""
+    print("\n" + "═"*60)
+    print("  ASTRO CORPUS v4 — SELF-CHECK DE INICIO")
+    print("═"*60)
+    ok = True
+
+    # 1. ChromaDB
+    try:
+        import chromadb
+        col = chromadb.PersistentClient(path=CHROMA_PATH).get_collection("astro_corpus")
+        n = col.count()
+        meta = col.metadata or {}
+        espacio = meta.get("hnsw:space", "NO DEFINIDO")
+        print(f"  [OK] ChromaDB: {n} chunks  |  hnsw:space={espacio}")
+    except Exception as ex:
+        print(f"  [FAIL] ChromaDB: {ex}")
+        ok = False
+
+    # 2. Modelo
+    try:
+        from sentence_transformers import SentenceTransformer
+        modelo = SentenceTransformer(MODELO_NAME)
+        dim_test = len(modelo.encode(["test"], normalize_embeddings=True)[0])
+        print(f"  [OK] Modelo: {MODELO_NAME}  |  dim={dim_test}")
+        if dim_test != 1024:
+            print(f"  [WARN] Dimension esperada 1024, obtenida {dim_test} — mismatch con BD!")
+            ok = False
+    except Exception as ex:
+        print(f"  [FAIL] Modelo: {ex}")
+        ok = False
+
+    # 3. Test de retrieval real
+    if ok:
+        try:
+            q = "query: jupiter en casa 2 abundancia dinero recursos"
+            emb = modelo.encode([q], normalize_embeddings=True).tolist()
+            res = col.query(query_embeddings=emb, n_results=3)
+            titulos = [m.get("titulo","?")[:50] for m in res["metadatas"][0]]
+            print(f"  [OK] Retrieval test: top-3 resultados:")
+            for i, t in enumerate(titulos, 1):
+                print(f"       {i}. {t}")
+        except Exception as ex:
+            print(f"  [FAIL] Retrieval test: {ex}")
+            ok = False
+
+    print("═"*60)
+    if not ok:
+        print("  ABORTAR: corrige los errores arriba antes de continuar.")
+        sys.exit(1)
+    print("  TODO OK — arrancando interfaz en http://localhost:7860")
+    print("═"*60 + "\n")
+
+
+
+# ═══════════════════════════════════════════════════════════
+#  HELPERS COMPARTIDOS
+# ═══════════════════════════════════════════════════════════
 def limpiar_vtt(texto):
     texto = re.sub(r"WEBVTT.*?\n", "", texto)
     texto = re.sub(r"\d{2}:\d{2}:\d{2}[\.,]\d+ --> \d{2}:\d{2}:\d{2}[\.,]\d+.*?\n", "", texto)
@@ -44,7 +105,8 @@ def chunker(texto):
         i += CHUNK_SIZE - CHUNK_OVERLAP
     return chunks
 
-FILLER_QUERY = set(['eh','ah','oh','mm','bueno','pues','entonces','osea','nada','tal','digamos','venga','vale','claro','oye','mira','vamos'])
+FILLER_QUERY = set(['eh','ah','oh','mm','bueno','pues','entonces','osea','nada',
+                    'tal','digamos','venga','vale','claro','oye','mira','vamos'])
 
 def normalizar_query(texto):
     texto = unidecode(texto.lower())
@@ -63,6 +125,7 @@ def get_col():
     global _chroma_col
     if _chroma_col is None:
         import chromadb
+        # get_collection (sin or_create) para no recrear con metadata incorrecto
         _chroma_col = chromadb.PersistentClient(path=CHROMA_PATH).get_collection("astro_corpus")
     return _chroma_col
 
@@ -79,8 +142,10 @@ def encontrar_json(sub_path):
     return p if os.path.exists(p) else None
 
 
+# ═══════════════════════════════════════════════════════════
+#  INDEXADO
+# ═══════════════════════════════════════════════════════════
 def _indexar_carpeta(directorio, log_fn):
-    """Indexa todos los VTT/SRT de una carpeta. log_fn(msg) -> str acumulado."""
     sub_files = list(set(
         glob.glob(f"{directorio}/**/*.vtt", recursive=True) +
         glob.glob(f"{directorio}/**/*.srt", recursive=True)
@@ -92,7 +157,7 @@ def _indexar_carpeta(directorio, log_fn):
         col    = get_col()
         con    = init_sqlite()
     except Exception as ex:
-        yield log_fn(f"  ❌  Error cargando modelo: {ex}")
+        yield log_fn(f"  ❌  Error cargando modelo/BD: {ex}")
         return
 
     yield log_fn("  ✓  Modelo listo")
@@ -115,8 +180,9 @@ def _indexar_carpeta(directorio, log_fn):
                 meta.get("webpage_url"), sub_path))
             con.commit()
             chunks = chunker(texto)
-            embs   = modelo.encode(chunks).tolist()
-            vid    = meta["id"]
+            # normalize_embeddings=True para consistencia con retrieval
+            embs = modelo.encode(chunks, normalize_embeddings=True).tolist()
+            vid  = meta["id"]
             col.add(
                 documents=chunks, embeddings=embs,
                 ids=[f"{vid}_{j}" for j in range(len(chunks))],
@@ -176,6 +242,10 @@ def reindexar():
     for estado in _indexar_carpeta(DIRECTORIO, e):
         yield estado
 
+
+# ═══════════════════════════════════════════════════════════
+#  BÚSQUEDA SEMÁNTICA (pestaña Consultar)
+# ═══════════════════════════════════════════════════════════
 def consultar(pregunta, n):
     if not pregunta.strip():
         return "⚠️  Escribe algo primero."
@@ -185,7 +255,9 @@ def consultar(pregunta, n):
     except Exception as ex:
         return f"❌  {ex}"
     pregunta_norm = normalizar_query(pregunta)
-    res = col.query(query_embeddings=modelo.encode([pregunta_norm], normalize_embeddings=True).tolist(), n_results=int(n))
+    # normalize_embeddings=True OBLIGATORIO para e5-large
+    emb = modelo.encode([pregunta_norm], normalize_embeddings=True).tolist()
+    res = col.query(query_embeddings=emb, n_results=int(n))
     if not res["documents"][0]:
         return "Sin resultados. ¿Has indexado algún canal?"
     out = f"🔍  «{pregunta}»\n{'═'*60}\n\n"
@@ -199,6 +271,9 @@ def consultar(pregunta, n):
     return out
 
 
+# ═══════════════════════════════════════════════════════════
+#  RAG COMPLETO (pestaña Preguntar a Qwen)
+# ═══════════════════════════════════════════════════════════
 def rag_consultar(pregunta, top_k):
     if not pregunta.strip():
         yield "Escribe una pregunta primero."
@@ -212,21 +287,19 @@ def rag_consultar(pregunta, top_k):
 
     yield "Buscando fragmentos relevantes..."
     q_norm = normalizar_query(pregunta)
+    # normalize_embeddings=True OBLIGATORIO para e5-large
     emb = modelo.encode([q_norm], normalize_embeddings=True).tolist()
-    # Recuperar más de los pedidos para poder filtrar los cortos
     res = col.query(query_embeddings=emb, n_results=int(top_k) + 4)
     docs_raw  = res["documents"][0]
     metas_raw = res["metadatas"][0]
 
-    # Filtrar chunks demasiado cortos (solapamientos truncados)
     pares = [(d, m) for d, m in zip(docs_raw, metas_raw) if len(d.strip()) >= 150]
-    pares = pares[:int(top_k)]  # quedarse con los pedidos tras filtrar
+    pares = pares[:int(top_k)]
 
     if not pares:
         yield "Sin resultados útiles en el corpus."
         return
 
-    # Construir contexto
     contexto = ""
     fuentes  = []
     vistos   = set()
@@ -286,6 +359,10 @@ RESPUESTA:"""
     salida = f"PREGUNTA: {pregunta}\n{separador}\n\n{respuesta}\n\n{linea}\nFUENTES CONSULTADAS:\n" + "\n".join(fuentes)
     yield salida
 
+
+# ═══════════════════════════════════════════════════════════
+#  ESTADO
+# ═══════════════════════════════════════════════════════════
 def estado():
     try:
         con     = sqlite3.connect(DB_PATH)
@@ -298,10 +375,13 @@ def estado():
         for c, n in canales:
             out += f"    • {c or 'desconocido'}: {n} vídeos\n"
         return out
-    except Exception:
-        return "Base de datos vacía. Usa 'Reindexar' primero."
+    except Exception as ex:
+        return f"Error: {ex}\nUsa 'Reindexar' primero si la BD está vacía."
 
 
+# ═══════════════════════════════════════════════════════════
+#  INTERFAZ GRADIO
+# ═══════════════════════════════════════════════════════════
 CSS = """
 .log textarea {
     font-family: 'Courier New', monospace !important;
@@ -322,10 +402,10 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
                 btn1 = gr.Button("▶  Descargar e indexar", variant="primary")
                 btn2 = gr.Button("🔄  Reindexar lo ya descargado", variant="secondary")
             log  = gr.Textbox(label="Actividad", lines=22, interactive=False, elem_classes="log")
-            btn1.click(fn=procesar,   inputs=urls, outputs=log)
-            btn2.click(fn=reindexar,  inputs=[],   outputs=log)
+            btn1.click(fn=procesar,  inputs=urls, outputs=log)
+            btn2.click(fn=reindexar, inputs=[],   outputs=log)
         with gr.Tab("🔍 Consultar"):
-            gr.Markdown("Búsqueda semántica.")
+            gr.Markdown("Búsqueda semántica directa (sin LLM).")
             with gr.Row():
                 q = gr.Textbox(label="Consulta", scale=4,
                                placeholder="Luna Saturno restricción emocional")
@@ -333,29 +413,25 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
             btn3 = gr.Button("Buscar", variant="primary")
             res  = gr.Textbox(label="Resultados", lines=20, interactive=False)
             btn3.click(fn=consultar, inputs=[q, n], outputs=res)
-        with gr.Tab("Preguntar a Qwen"):
-            gr.Markdown("RAG completo: recupera fragmentos del corpus y genera respuesta con Qwen via LM Studio.")
+        with gr.Tab("💬 Preguntar a Qwen"):
+            gr.Markdown("RAG completo: recupera fragmentos + genera respuesta con Qwen via LM Studio.")
             with gr.Row():
                 rq = gr.Textbox(label="Pregunta", scale=4,
                                 placeholder="Que dice Isabel Pareja sobre Saturno en casa 7?")
-                rk = gr.Slider(3, 10, value=6, step=1, label="Fragmentos a recuperar")
+                rk = gr.Slider(3, 10, value=8, step=1, label="Fragmentos a recuperar")
             btn_rag = gr.Button("Preguntar", variant="primary")
             rag_out = gr.Textbox(label="Respuesta", lines=22, interactive=False)
             btn_rag.click(fn=rag_consultar, inputs=[rq, rk], outputs=rag_out)
-        with gr.Tab("Estado"):
+        with gr.Tab("📊 Estado"):
             btn4 = gr.Button("🔄 Actualizar")
             est  = gr.Textbox(label="Estado", lines=14, interactive=False)
             btn4.click(fn=estado, outputs=est)
             app.load(fn=estado, outputs=est)
 
+
+# ═══════════════════════════════════════════════════════════
+#  MAIN — self-check antes de arrancar
+# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    print("\nAstro Corpus v3 arrancando en http://localhost:7863\n")
-    app.launch(server_port=7863, inbrowser=True)
-
-
-
-
-
-
-
-
+    startup_check()  # aborta si algo falla
+    app.launch(server_port=PORT, server_name="127.0.0.1", inbrowser=True)
