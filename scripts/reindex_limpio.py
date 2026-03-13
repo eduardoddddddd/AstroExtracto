@@ -1,4 +1,4 @@
-"""
+﻿"""
 reindex_limpio.py — Reindexado limpio de ChromaDB desde corpus VTT
 ===================================================================
 Script de utilidad para borrar y reconstruir desde cero la colección
@@ -48,6 +48,8 @@ def limpiar_vtt(texto_vtt):
         linea = linea.strip()
         if not linea: continue
         if linea.startswith('WEBVTT'): continue
+        if linea.startswith('Kind:'): continue
+        if linea.startswith('Language:'): continue
         if re.match(r'^\d{2}:\d{2}:\d{2}[\.,]\d{3}\s*-->', linea): continue
         if re.match(r'^\d+$', linea): continue
         if linea in vistas: continue
@@ -159,3 +161,4 @@ for inicio in range(0, total, LOTE):
         print(f"   [{pct:3d}%] {fin}/{total}")
 
 print(f"\n✅ COMPLETADO — {col.count()} chunks indexados")
+

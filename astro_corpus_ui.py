@@ -11,6 +11,7 @@ Sin gr.Progress (causa crash). Boton reindexar.
 import subprocess, json, os, re, glob, sqlite3
 from pathlib import Path
 import gradio as gr
+from unidecode import unidecode
 
 _chroma_col = None
 _modelo     = None
@@ -39,6 +40,13 @@ def chunker(texto):
         chunks.append(texto[i:i+CHUNK_SIZE])
         i += CHUNK_SIZE - CHUNK_OVERLAP
     return chunks
+
+FILLER_QUERY = set(['eh','ah','oh','mm','bueno','pues','entonces','osea','nada','tal','digamos','venga','vale','claro','oye','mira','vamos'])
+
+def normalizar_query(texto):
+    texto = unidecode(texto.lower())
+    palabras = [p for p in texto.split() if p not in FILLER_QUERY]
+    return ' '.join(palabras)
 
 def init_sqlite():
     con = sqlite3.connect(DB_PATH)
@@ -173,7 +181,8 @@ def consultar(pregunta, n):
         col    = get_col()
     except Exception as ex:
         return f"❌  {ex}"
-    res = col.query(query_embeddings=modelo.encode([pregunta]).tolist(), n_results=int(n))
+    pregunta_norm = normalizar_query(pregunta)
+    res = col.query(query_embeddings=modelo.encode([pregunta_norm]).tolist(), n_results=int(n))
     if not res["documents"][0]:
         return "Sin resultados. ¿Has indexado algún canal?"
     out = f"🔍  «{pregunta}»\n{'═'*60}\n\n"
@@ -242,4 +251,5 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
 if __name__ == "__main__":
     print("\nAstro Corpus v3 arrancando en http://localhost:7860\n")
     app.launch(server_port=7860, inbrowser=True)
+
 
