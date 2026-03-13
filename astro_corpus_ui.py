@@ -22,6 +22,9 @@ CHROMA_PATH  = "C:/Users/Edu/Downloads/chroma_db"
 MODELO_NAME  = "intfloat/multilingual-e5-large"
 CHUNK_SIZE   = 500
 CHUNK_OVERLAP= 50
+LM_STUDIO    = "http://127.0.0.1:1234/v1/chat/completions"
+LM_MODEL     = "qwen3-coder-30b-a3b-instruct"
+RAG_TOP_K    = 6
 
 
 def limpiar_vtt(texto):
@@ -195,6 +198,73 @@ def consultar(pregunta, n):
         out += f"\n{doc[:450]}\n\n"
     return out
 
+
+def rag_consultar(pregunta, top_k):
+    if not pregunta.strip():
+        yield "Escribe una pregunta primero."
+        return
+    try:
+        modelo = get_modelo()
+        col    = get_col()
+    except Exception as ex:
+        yield f"Error cargando modelo: {ex}"
+        return
+
+    yield "Buscando fragmentos relevantes..."
+    q_norm = normalizar_query(pregunta)
+    emb = modelo.encode([q_norm], normalize_embeddings=True).tolist()
+    res = col.query(query_embeddings=emb, n_results=int(top_k))
+    docs  = res["documents"][0]
+    metas = res["metadatas"][0]
+
+    if not docs:
+        yield "Sin resultados en el corpus."
+        return
+
+    # Construir contexto
+    contexto = ""
+    fuentes  = []
+    for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+        titulo = meta.get("titulo", "?")[:70]
+        contexto += f"\n[Fragmento {i} — {titulo}]\n{doc}\n"
+        fuentes.append(f"  {i}. {titulo}")
+        if meta.get("url"):
+            fuentes.append(f"     {meta['url']}")
+
+    prompt = f"""Eres un asistente especializado en astrologia terapeutica y evolutiva, basado en las ensenanzas de Isabel Pareja.
+Responde la siguiente pregunta usando UNICAMENTE los fragmentos proporcionados.
+Si los fragmentos no contienen informacion suficiente dilo claramente. No inventes ni extrapoles.
+Responde en espanol, de forma clara y estructurada.
+
+FRAGMENTOS:
+{contexto}
+
+PREGUNTA: {pregunta}
+
+RESPUESTA:"""
+
+    yield f"Consultando {LM_MODEL}...\n"
+
+    # Llamada a LM Studio (sin streaming para simplicidad)
+    try:
+        import urllib.request as ur
+        payload = json.dumps({
+            "model": LM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 1000,
+            "stream": False
+        }).encode("utf-8")
+        req = ur.Request(LM_STUDIO, data=payload, headers={"Content-Type": "application/json"})
+        with ur.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read())
+        respuesta = data["choices"][0]["message"]["content"].strip()
+    except Exception as ex:
+        yield f"Error LM Studio: {ex}\n\nAsegurate de que LM Studio esta arrancado en {LM_STUDIO}"
+        return
+
+    salida = f"PREGUNTA: {pregunta}\n{'='*60}\n\n{respuesta}\n\n{'─'*60}\nFUENTES CONSULTADAS:\n" + "\n".join(fuentes)
+    yield salida
 def estado():
     try:
         con     = sqlite3.connect(DB_PATH)
@@ -242,15 +312,28 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
             btn3 = gr.Button("Buscar", variant="primary")
             res  = gr.Textbox(label="Resultados", lines=20, interactive=False)
             btn3.click(fn=consultar, inputs=[q, n], outputs=res)
-        with gr.Tab("📊 Estado"):
+        with gr.Tab("Preguntar a Qwen"):
+            gr.Markdown("RAG completo: recupera fragmentos del corpus y genera respuesta con Qwen via LM Studio.")
+            with gr.Row():
+                rq = gr.Textbox(label="Pregunta", scale=4,
+                                placeholder="Que dice Isabel Pareja sobre Saturno en casa 7?")
+                rk = gr.Slider(3, 10, value=6, step=1, label="Fragmentos a recuperar")
+            btn_rag = gr.Button("Preguntar", variant="primary")
+            rag_out = gr.Textbox(label="Respuesta", lines=22, interactive=False)
+            btn_rag.click(fn=rag_consultar, inputs=[rq, rk], outputs=rag_out)
+        with gr.Tab("Estado"):
             btn4 = gr.Button("🔄 Actualizar")
             est  = gr.Textbox(label="Estado", lines=14, interactive=False)
             btn4.click(fn=estado, outputs=est)
             app.load(fn=estado, outputs=est)
 
 if __name__ == "__main__":
-    print("\nAstro Corpus v3 arrancando en http://localhost:7861\n")
-    app.launch(server_port=7861, inbrowser=True)
+    print("\nAstro Corpus v3 arrancando en http://localhost:7862\n")
+    app.launch(server_port=7862, inbrowser=True)
+
+
+
+
 
 
 
