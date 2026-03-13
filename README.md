@@ -1,44 +1,40 @@
 # 🪐 AstroExtracto
 
-> Base de conocimiento astrológico personal construida desde canales de YouTube en castellano, con búsqueda semántica RAG y consultas en lenguaje natural vía LLM.
+> Base de conocimiento astrológico personal construida desde canales de YouTube en castellano, con búsqueda semántica RAG y consultas en lenguaje natural vía LLM local.
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Gradio](https://img.shields.io/badge/Interface-Gradio-orange)
 ![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB-purple)
-![License](https://img.shields.io/badge/License-MIT-green)
-![Status](https://img.shields.io/badge/Status-En%20desarrollo-yellow)
+![e5-large](https://img.shields.io/badge/Embeddings-e5--large--1024d-blueviolet)
+![Status](https://img.shields.io/badge/Status-v4%20estable-brightgreen)
 
 ---
 
 ## 📖 Descripción
 
-AstroExtracto es una herramienta **100% local** que permite construir una base de conocimiento astrológico personal a partir de las transcripciones de canales de YouTube seleccionados por el usuario.
+AstroExtracto es una herramienta **100% local** que permite construir una base de conocimiento astrológico personal a partir de transcripciones de canales de YouTube seleccionados por el usuario.
 
-El objetivo no es reemplazar al astrólogo sino **potenciar la investigación personal**: dado un corpus de decenas o cientos de horas de contenido en audio/vídeo, permite consultar ese conocimiento acumulado por significado semántico, no por palabras clave exactas.
-
-### ¿Qué problema resuelve?
-
-Un astrólogo que sigue 10 canales de YouTube en castellano acumula cientos de horas de contenido. Cuando quiere saber *"¿qué dicen sobre Saturno en Escorpio en casa 8?"*, no puede buscar ese fragmento concreto entre 500 vídeos. AstroExtracto lo hace posible en segundos.
+Dado un corpus de decenas o cientos de horas de contenido, permite consultar ese conocimiento acumulado por **significado semántico**, no por palabras clave exactas. Una pregunta como *"¿qué dice Isabel Pareja sobre Júpiter en casa 2?"* localiza los fragmentos exactos aunque el astrólogo no haya usado esas palabras literales.
 
 ---
 
-## ✨ Características
+## ✨ Características (v4)
 
 | Característica | Detalle |
 |---|---|
 | 📥 Descarga masiva | `yt-dlp` descarga subtítulos sin bajar el vídeo |
-| 📄 Soporte VTT y SRT | Funciona sin `ffmpeg` instalado |
-| 🗄️ Base vectorial local | ChromaDB, sin datos en la nube |
-| 🔍 Búsqueda semántica | Embeddings multilingües, entiende castellano |
-| 🖥️ Interfaz visual | Gradio, se abre en el navegador con un comando |
-| 🤖 RAG sobre LLM | Integración con Claude API para respuestas elaboradas |
+| 📄 Soporte VTT y SRT | Sin dependencia de `ffmpeg` |
+| 🗄️ Base vectorial local | ChromaDB persistente, sin datos en la nube |
+| 🔍 Búsqueda semántica | `multilingual-e5-large` (1024 dims, estado del arte multilingüe) |
+| 🖥️ Interfaz visual | Gradio en `http://localhost:7860` |
+| 🤖 RAG con LLM local | Pipeline completo con Qwen via LM Studio |
+| 🔬 Startup self-check | Valida BD + modelo + retrieval real al arrancar |
 | 📊 SQLite metadatos | Trazabilidad completa: canal, vídeo, URL, fecha |
-| ⚡ 100% local | Sin suscripciones, sin API keys obligatorias para lo básico |
 
 
 ---
 
-## 🏗️ Arquitectura
+## 🏗️ Arquitectura (v4)
 
 ```
 YouTube Channels (URLs seleccionadas por el usuario)
@@ -46,113 +42,119 @@ YouTube Channels (URLs seleccionadas por el usuario)
           ▼
     ┌─────────────┐
     │   yt-dlp    │  ← descarga subtítulos (.vtt/.srt) + metadatos (.json)
-    └──────┬──────┘       sin descargar el vídeo (~10-30 min por 1000 vídeos)
+    └──────┬──────┘
            │
            ▼
     ┌─────────────┐
     │  Limpieza   │  ← elimina timestamps, tags HTML, ruido VTT/SRT
-    │  de texto   │     limpiar_vtt() / limpiar_srt()
     └──────┬──────┘
            │
      ┌─────┴──────┐
      │            │
      ▼            ▼
-┌─────────┐  ┌────────────────────────────────┐
-│ SQLite  │  │         ChromaDB               │
-│         │  │   (base vectorial local)        │
-│ id      │  │                                 │
-│ canal   │  │  documento (chunk 500 chars)    │
-│ titulo  │  │  + embedding (384 dims)         │
-│ fecha   │  │  + metadata {canal, url, chunk} │
-│ url     │  │                                 │
-└─────────┘  └──────────────┬─────────────────┘
-                             │
-               ┌─────────────▼──────────────┐
-               │     Consulta del usuario    │
-               │     (lenguaje natural)      │
-               └─────────────┬──────────────┘
-                             │
-               ┌─────────────▼──────────────┐
-               │  sentence-transformers      │
-               │  paraphrase-multilingual    │  ← embedding pregunta
-               │  MiniLM-L12-v2             │
-               └─────────────┬──────────────┘
-                             │
-               ┌─────────────▼──────────────┐
-               │  ChromaDB query             │
-               │  Top-K chunks relevantes    │  ← recuperación semántica
-               └─────────────┬──────────────┘
-                             │
-               ┌─────────────▼──────────────┐
-               │  [OPCIONAL] Claude API      │
-               │  RAG: contexto + pregunta   │  ← respuesta elaborada
-               │  → respuesta con fuentes    │     con citas de canal/vídeo
-               └────────────────────────────┘
+┌─────────┐  ┌──────────────────────────────────────────┐
+│ SQLite  │  │              ChromaDB                    │
+│ videos  │  │   colección: astro_corpus                │
+│ metad.  │  │   hnsw:space = cosine                    │
+└─────────┘  │   chunks ~500 chars, overlap 50          │
+             │   embeddings: e5-large 1024 dims          │
+             │   prefijo indexado: "passage: título+txt" │
+             └──────────────┬───────────────────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │     Consulta del usuario    │
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │  multilingual-e5-large      │
+              │  normalizar_query()         │  ← prefijo "query: " + unidecode
+              │  normalize_embeddings=True  │  ← OBLIGATORIO para e5
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │  ChromaDB query             │
+              │  top_k + 4 candidatos       │
+              │  filtro chunks < 150 chars  │
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │  LM Studio — Qwen           │
+              │  RAG: contexto + pregunta   │  ← 127.0.0.1:1234
+              │  → respuesta con fuentes    │
+              └────────────────────────────┘
 ```
 
 ### Stack tecnológico
 
-| Capa | Tecnología | Motivo |
+| Capa | Tecnología | Notas |
 |---|---|---|
-| Descarga | `yt-dlp` | Estándar, activamente mantenido, sin API key |
-| Interfaz | `Gradio` | Web local sin configuración, streaming de logs |
-| Embeddings | `sentence-transformers` | Modelo multilingüe, corre en CPU/GPU local |
-| Vector DB | `ChromaDB` | Persistente, local, sin servidor externo |
-| Metadatos | `SQLite` | Sin dependencias, portable, suficiente para este volumen |
-| LLM (RAG) | `Claude API` (Anthropic) | Opcional para la fase de generación |
+| Descarga | `yt-dlp` | Sin API key, activamente mantenido |
+| Interfaz | `Gradio` | Web local, streaming de logs |
+| Embeddings | `intfloat/multilingual-e5-large` | 1024 dims, superior a MiniLM para castellano |
+| Vector DB | `ChromaDB` | Persistente, local, espacio coseno |
+| Metadatos | `SQLite` | Sin servidor, portable |
+| LLM (RAG) | `Qwen3-coder-30b` via `LM Studio` | 100% local, sin API keys |
 
 
 ---
 
-## 🚀 Instalación
+## 🚀 Instalación rápida
 
 ### Requisitos
 
-- Python 3.9 o superior
-- Windows / Linux / macOS
-- ~2 GB espacio en disco para el modelo de embeddings (se descarga automáticamente la primera vez)
-- Conexión a internet (solo para descargar subtítulos y el modelo, una sola vez)
+- Python 3.9–3.12 (no 3.14 — sin wheels CUDA para PyTorch)
+- ~3 GB disco para el modelo e5-large
+- LM Studio corriendo en `http://127.0.0.1:1234` con modelo Qwen cargado
 
-### Instalación rápida
+### Pasos
 
 ```bash
-# 1. Clonar el repositorio
-git clone https://github.com/TU_USUARIO/AstroExtracto.git
+git clone https://github.com/eduardoddddddd/AstroExtracto.git
 cd AstroExtracto
-
-# 2. Instalar dependencias
 pip install -r requirements.txt
-
-# 3. Arrancar la interfaz
 python astro_corpus_ui.py
 ```
 
-La interfaz se abre automáticamente en `http://localhost:7860`
+La interfaz se abre en `http://localhost:7860`. Antes de abrir el navegador verás el **self-check** en consola (ver sección más abajo).
 
-### Dependencias (`requirements.txt`)
+### `requirements.txt`
 
 ```
 yt-dlp>=2024.1.0
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
 gradio>=4.0.0
+unidecode>=1.3.0
 ```
 
-### Instalación opcional (mejora calidad de subtítulos)
+---
 
-```bash
-# ffmpeg — convierte VTT a SRT con mejor limpieza
-# Windows (con winget):
-winget install ffmpeg
+## 🔬 Self-check de inicio (v4)
 
-# Linux:
-sudo apt install ffmpeg
+Al arrancar, el script valida automáticamente el entorno **antes** de abrir la interfaz:
 
-# macOS:
-brew install ffmpeg
+```
+════════════════════════════════════════════════════════════
+  ASTRO CORPUS v4 — SELF-CHECK DE INICIO
+════════════════════════════════════════════════════════════
+  [OK] ChromaDB: 10363 chunks  |  hnsw:space=cosine
+  [OK] Modelo: intfloat/multilingual-e5-large  |  dim=1024
+  [OK] Retrieval test: top-3 resultados:
+       1. Abundancia emocional y material: Júpiter en tu Casa 2
+       2. Los planetas en casa 2: recursos y valores
+       3. Conjunción Júpiter-Venus: expansión material
+════════════════════════════════════════════════════════════
+  TODO OK — arrancando interfaz en http://localhost:7860
+════════════════════════════════════════════════════════════
 ```
 
-> ⚠️ Sin ffmpeg el programa funciona igualmente, usando los archivos VTT directamente.
+Si algo falla (dimensión incorrecta, colección inexistente, retrieval erróneo), **el proceso aborta con un mensaje claro** antes de mostrar la interfaz.
+
+Los tres checks son:
+1. **ChromaDB** — verifica chunks, colección y espacio de distancia
+2. **Modelo** — carga e5-large y verifica que produce vectores de 1024 dims
+3. **Retrieval real** — hace una query de prueba y muestra los top-3 títulos
+
 
 ---
 
@@ -160,128 +162,299 @@ brew install ffmpeg
 
 ### 1. Ingestar canales
 
-1. Abre la pestaña **📡 Ingestar canales**
-2. Introduce una o varias URLs de canales YouTube (una por línea)
-3. Pulsa **▶ Descargar e indexar**
-4. Observa el log en tiempo real
+Pestaña **📡 Ingestar canales** → introduce URLs → **▶ Descargar e indexar**
 
-Formatos de URL aceptados:
+Formatos válidos:
 ```
-https://www.youtube.com/@NombreCanal/videos     ← canal completo
-https://www.youtube.com/c/NombreCanal/videos    ← formato alternativo
-https://www.youtube.com/playlist?list=PLxxxx    ← playlist específica
-https://www.youtube.com/watch?v=VIDEO_ID        ← vídeo individual
+https://www.youtube.com/@NombreCanal/videos
+https://www.youtube.com/playlist?list=PLxxxx
+https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-Si ya tienes los subtítulos descargados previamente, usa el botón **🔄 Reindexar lo ya descargado** para no volver a descargar.
+Si ya tienes los VTTs descargados: botón **🔄 Reindexar lo ya descargado**.
 
-### 2. Consultar el corpus
+### 2. Búsqueda semántica directa
 
-1. Abre la pestaña **🔍 Consultar**
-2. Escribe tu consulta en lenguaje natural
-3. Ajusta el número de resultados con el slider
-4. Pulsa **Buscar**
+Pestaña **🔍 Consultar** — retrieval puro sin LLM. Ideal para verificar que los chunks correctos se recuperan antes de pasar al RAG.
 
-Ejemplos de consultas efectivas:
+Ejemplos:
 ```
-Saturno Neptuno conjunción significado mundano
-Luna en casa 12 emociones ocultas
-Nodo norte Piscis misión de vida
-rectificación carta natal técnicas
-tránsitos Plutón transformación crisis
-astrocartografía líneas AC DC
+Jupiter casa 2 abundancia dinero
+Saturno Neptuno conjuncion 2026
+Luna casa 12 emociones ocultas
+nodo norte mision de vida
 ```
 
-> 💡 **Tip**: La búsqueda es semántica, no literal. No necesitas usar las palabras exactas que usó el astrólogo — el sistema entiende el concepto.
+> 💡 La búsqueda es semántica. "restricción afectiva Saturno-Luna" encuentra
+> fragmentos sobre "el bloqueo emocional de Saturno en aspecto a la Luna".
 
-### 3. Estado de la base de datos
+### 3. RAG completo con Qwen
 
-La pestaña **📊 Estado** muestra:
-- Número total de vídeos indexados
-- Número de fragmentos (chunks) en la base vectorial
-- Desglose por canal
+Pestaña **💬 Preguntar a Qwen** — recupera fragmentos + genera respuesta sintetizada.
+
+Requiere LM Studio activo en `http://127.0.0.1:1234` con modelo `qwen3-coder-30b-a3b-instruct`.
+
+### 4. Estado de la BD
+
+Pestaña **📊 Estado** — muestra total de vídeos, chunks y desglose por canal.
+
+---
+
+## ⚙️ Configuración
+
+Variables en la cabecera de `astro_corpus_ui.py`:
+
+```python
+DIRECTORIO   = "C:/Users/Edu/Downloads/corpus_astro"
+DB_PATH      = "C:/Users/Edu/Downloads/astro_knowledge.db"
+CHROMA_PATH  = "C:/Users/Edu/Downloads/chroma_db"
+MODELO_NAME  = "intfloat/multilingual-e5-large"
+CHUNK_SIZE   = 500     # caracteres por chunk
+CHUNK_OVERLAP= 50      # solapamiento
+LM_STUDIO    = "http://127.0.0.1:1234/v1/chat/completions"
+LM_MODEL     = "qwen3-coder-30b-a3b-instruct"
+RAG_TOP_K    = 8       # fragmentos a recuperar
+PORT         = 7860    # fijo, sin acumulación de puertos
+```
 
 
 ---
 
-## 🔬 Cómo funciona por dentro
+## 📜 Historial de versiones detallado
 
-### Fase 1 — Descarga de subtítulos
+### v1 — Prototipo inicial (commit `a7aada3`)
 
-`yt-dlp` recorre el canal completo y descarga únicamente los archivos de texto:
+**Objetivo:** MVP funcional: descargar VTTs e indexarlos.
 
-```bash
-yt-dlp \
-  --skip-download \          # no descarga el vídeo
-  --write-auto-subs \        # subtítulos automáticos de YouTube
-  --sub-lang es \            # solo español
-  --write-info-json \        # metadatos del vídeo
-  --output "%(channel)s/%(upload_date)s_%(id)s_%(title)s.%(ext)s" \
-  URL_DEL_CANAL
+**Lo que se hizo:**
+- Descarga masiva con `yt-dlp` (subtítulos + metadatos JSON)
+- Limpieza básica de archivos VTT (timestamps, tags HTML)
+- Indexación en ChromaDB con `paraphrase-multilingual-MiniLM-L12-v2` (384 dims)
+- Interfaz Gradio con 3 pestañas: Ingestar, Consultar, Estado
+- SQLite para metadatos de vídeos
+
+**Problemas detectados:**
+- El texto de los VTTs llegaba **triplicado** — la misma frase aparecía repetida 3 veces consecutivas porque los subtítulos automáticos de YouTube solapan frases para animar el texto
+- 46.289 chunks indexados, pero más de 2/3 eran duplicados ruidosos
+- Sin normalización de texto: tildes, mayúsculas y palabras de relleno interferían con la relevancia
+
+**Conclusión:** La calidad del retrieval era baja porque el corpus estaba contaminado. Necesario limpiar antes de indexar.
+
+---
+
+### v2 — Limpieza y normalización (commits `5f1a2c6`, `1be79a0`)
+
+**Objetivo:** Corpus limpio + mejor relevancia de búsqueda.
+
+**Lo que se hizo:**
+- Reescritura del parser VTT para eliminar duplicados: deduplica líneas consecutivas idénticas
+- Normalización de queries: `unidecode` (elimina tildes) + lowercase + filtro de palabras de relleno ("bueno", "pues", "entonces"...)
+- Reducción de chunk size a 120 palabras para mayor precisión
+- Script independiente `reindex_v2.py` para reindexar desde cero
+
+**Resultado:** 12.918 chunks limpios vs 46.289 ruidosos. El corpus bajó de tamaño pero ganó calidad.
+
+**Problemas restantes:**
+- MiniLM-L12-v2 (384 dims) tiene rendimiento mediocre en castellano técnico
+- Las búsquedas encontraban fragmentos temáticamente relacionados pero no el vídeo específico correcto
+- Ejemplo: query "Júpiter casa 2" devolvía vídeos sobre "conjunción Júpiter-Neptuno" en lugar del vídeo dedicado a Júpiter en Casa 2
+
+**Conclusión:** El modelo era el cuello de botella. MiniLM es rápido pero no suficientemente preciso para terminología astrológica en castellano.
+
+---
+
+### v3 — Upgrade a e5-large + RAG completo (commits `c39c614`, `238d145`, `3e69807`)
+
+**Objetivo:** Mejor modelo de embeddings + pipeline RAG funcional con LLM local.
+
+**Lo que se hizo:**
+- Cambio de modelo a `intfloat/multilingual-e5-large` (1024 dims, 560M parámetros)
+- Protocolo e5: prefijo `"passage: "` al indexar, `"query: "` al buscar — **obligatorio** para este modelo
+- `normalize_embeddings=True` en el retrieval (eval_e5.py) — **obligatorio** para e5
+- Reindexado completo: 10.363 chunks con el nuevo modelo
+- Pipeline RAG completo: retrieval → prompt estructurado → Qwen via LM Studio → respuesta con fuentes
+- Filtro de chunks cortos (< 150 chars) para eliminar solapamientos truncados
+
+**Problemas graves descubiertos en producción:**
+
+**Bug 1 (crítico):** `consultar()` llamaba `encode()` **sin** `normalize_embeddings=True`. El código correcto estaba en `eval_e5.py` y en `rag_consultar()`, pero se perdió en la función de búsqueda directa. Resultado: el retrieval de la pestaña "Consultar" producía vectores en un espacio diferente al de la BD → resultados incorrectos.
+
+**Bug 2 (crítico):** `get_col()` usaba `get_or_create_collection()` en lugar de `get_collection()`. Esto significa que si ChromaDB recreaba el objeto colección en una nueva sesión, podía hacerlo **sin** el metadato `hnsw:space: cosine`, cayendo a distancia euclidiana y rompiendo la similitud semántica.
+
+**Bug 3 (menor):** `RAG_TOP_K = 6` — demasiado bajo. Con 6 fragmentos, la probabilidad de que el fragmento exacto entre los top-6 era insuficiente para queries específicas.
+
+**Bug 4 (no detectado hasta v4):** `_indexar_carpeta()` llamaba `modelo.encode(chunks)` también **sin** `normalize_embeddings=True`. Los chunks indexados y los vectores de query estaban en espacios ligeramente distintos.
+
+**Diagnóstico de los bugs:** Se detectaron ejecutando el check de diagnóstico directamente contra ChromaDB:
+```
+chromadb.errors.InvalidArgumentError:
+Collection expecting embedding with dimension of 1024, got 384
+```
+Este error reveló que en algún punto del pipeline se estaba usando el modelo MiniLM (384 dims) en lugar de e5-large (1024 dims) — probablemente por un objeto `_modelo` cacheado de una sesión anterior.
+
+**Conclusión:** Los fixes parciales aplicados en v3 no resolvieron el problema porque el bug de `_indexar_carpeta` seguía contaminando los índices. La solución real requería un self-check integrado que verificara el pipeline completo en cada inicio.
+
+
+---
+
+### v4 — Self-check integrado + corrección completa (commit `204885f`) ← **versión actual**
+
+**Objetivo:** Eliminar todos los bugs de embeddings y hacer el sistema autodiagnósticable.
+
+**Lo que se hizo:**
+
+1. **`startup_check()` integrado en `main`** — ejecuta tres validaciones antes de abrir la interfaz:
+   - Conecta a ChromaDB y verifica chunks + `hnsw:space`
+   - Carga e5-large y verifica que produce vectores de exactamente 1024 dims
+   - Hace una query de prueba real y muestra los top-3 títulos recuperados
+   - Si cualquier check falla → `sys.exit(1)` con mensaje claro
+
+2. **`normalize_embeddings=True` en los 4 sitios del código:**
+   - `consultar()` — búsqueda directa (era el bug principal no resuelto en v3)
+   - `rag_consultar()` — ya estaba correcto en v3, conservado
+   - `_indexar_carpeta()` — **nuevo en v4**, el bug más silencioso
+   - `startup_check()` — en el test de retrieval
+
+3. **`get_collection()` en lugar de `get_or_create_collection()`** — evita recrear la colección con metadatos incorrectos
+
+4. **`PORT = 7860` fijo** — elimina la acumulación en puertos 7861, 7862, 7863... causada por procesos anteriores que no se limpiaban
+
+5. **Reescritura completa del archivo** — elimina inconsistencias acumuladas entre parches
+
+**Verificación pre-deploy:**
+```
+  [OK] startup_check definida
+  [OK] normalize x4 (4 ocurrencias de normalize_embeddings=True)
+  [OK] normalize en indexar: encode(chunks, normalize_embeddings=True)
+  [OK] get_collection sin or_create
+  [OK] PORT=7860
+  [OK] startup_check en main
 ```
 
-Resultado por vídeo:
+**Cambios en la interfaz:**
+- Puerto fijo 7860 (antes acumulaba: 7860→7861→7862→7863)
+- Slider RAG por defecto: 8 fragmentos (antes 6)
+- Pestaña "Preguntar a Qwen" con slider visible de fragmentos
+
+**Lección aprendida:** Los bugs de embeddings son especialmente difíciles porque **no dan error en tiempo de ejecución** — el sistema devuelve resultados, pero incorrectos. La única forma de detectarlos es comparar dimensiones explícitamente o hacer un test de retrieval con ground truth conocido. Por eso el self-check es parte permanente del código, no un script externo.
+
+---
+
+## 🗂️ Scripts de utilidad (`scripts/`)
+
+| Script | Propósito | Estado |
+|---|---|---|
+| `reindex_e5.py` | Reindexado completo con e5-large | ✅ Usar este |
+| `check_chroma.py` | Diagnóstico rápido de la BD | ✅ |
+| `check_chroma2.py` | Inspección de calidad con búsquedas de prueba | ✅ |
+| `test_busqueda.py` | Validación post-reindexado | ✅ |
+| `rag_query.py` | CLI standalone del pipeline RAG | ✅ |
+| `reindex_limpio.py` | Reindexado v1 (obsoleto, MiniLM) | ⚠️ Histórico |
+| `reindex_v2.py` | Reindexado v2 (obsoleto, MiniLM) | ⚠️ Histórico |
+| `demo_embeddings.py` | Demo educativa similitud coseno | ℹ️ |
+
+### Reindexar desde cero
+
+Si necesitas reindexar (cambio de modelo, corpus nuevo):
+```powershell
+# 1. Hacer backup de la BD actual (opcional)
+# 2. Eliminar la colección existente
+python -c "import chromadb; chromadb.PersistentClient('C:/Users/Edu/Downloads/chroma_db').delete_collection('astro_corpus')"
+# 3. Reindexar
+python scripts/reindex_e5.py
 ```
-corpus_astro/
-  NombreCanal/
-    20240315_ABC123_Titulo del video.es.vtt    ← transcripción
-    20240315_ABC123_Titulo del video.info.json ← metadatos
-```
 
-### Fase 2 — Limpieza del texto
+> ⚠️ Tras reindexar con un modelo diferente, el startup_check verificará automáticamente
+> que las dimensiones coinciden antes de arrancar la interfaz.
 
-Los archivos VTT tienen mucho ruido que hay que eliminar:
 
-```
-WEBVTT
-Kind: captions
-Language: es
+---
 
-00:00:01.240 --> 00:00:04.880 align:start position:0%
-hola a todos bienvenidos
-<00:00:02.120><c> bienvenidos</c><00:00:03.600><c> a</c>
+## 🧠 Detalles técnicos del pipeline de embeddings
 
-→ "hola a todos bienvenidos a este vídeo sobre astrología..."
-```
+### Por qué e5-large y no MiniLM
 
-### Fase 3 — Chunking y embeddings
+| Modelo | Dims | Parámetros | Castellano | Velocidad |
+|---|---|---|---|---|
+| `paraphrase-multilingual-MiniLM-L12-v2` | 384 | 118M | Aceptable | Rápido |
+| `intfloat/multilingual-e5-large` | 1024 | 560M | Excelente | Medio |
 
-El texto limpio se divide en fragmentos solapados de 500 caracteres (con 50 de solapamiento) para preservar el contexto entre fragmentos:
+e5-large fue entrenado específicamente con pares (query, passage) en múltiples idiomas. Para terminología técnica como la astrológica en castellano, la diferencia de calidad es significativa.
+
+### El protocolo de prefijos e5
+
+El modelo e5 **requiere** prefijos específicos para distinguir el tipo de texto:
 
 ```python
-chunk_1: "...cuando saturno entra en capricornio las estructuras sociales..."
-chunk_2: "...las estructuras sociales se someten a una revisión profunda..."
-chunk_3: "...revisión profunda que puede durar hasta tres años dependiendo..."
+# Al INDEXAR cada chunk:
+texto_a_indexar = "passage: " + titulo_normalizado + " " + texto_chunk
+
+# Al BUSCAR:
+query_a_buscar = "query: " + texto_normalizado_de_la_pregunta
 ```
 
-Cada chunk se convierte en un vector de 384 dimensiones usando el modelo `paraphrase-multilingual-MiniLM-L12-v2`.
+Sin estos prefijos, el modelo no funciona correctamente aunque las dimensiones coincidan.
 
-### Fase 4 — Búsqueda semántica
+### Por qué `normalize_embeddings=True` es obligatorio
 
-Al hacer una consulta:
-1. La pregunta se convierte al mismo espacio vectorial
-2. ChromaDB calcula la distancia coseno con todos los chunks
-3. Devuelve los K más cercanos semánticamente
+`e5-large` produce vectores que **deben** estar normalizados a longitud unitaria para que la similitud coseno funcione correctamente. Sin normalización, los vectores de diferentes longitudes producen rankings incorrectos.
 
-Esto permite que *"restricción emocional Saturno-Luna"* encuentre fragmentos que hablan de *"el bloqueo afectivo de Saturno en aspecto a la Luna"* aunque no compartan ninguna palabra.
+```python
+# MAL — puede dar resultados incorrectos con e5
+emb = modelo.encode([texto]).tolist()
 
-### Fase 5 — RAG con LLM (próximamente)
-
-Los chunks recuperados se envían como contexto a Claude:
-
+# BIEN — obligatorio para e5-large
+emb = modelo.encode([texto], normalize_embeddings=True).tolist()
 ```
-SISTEMA: Eres un asistente de astrología. Responde SOLO basándote
-en los fragmentos proporcionados. Cita el canal y vídeo de origen.
 
-CONTEXTO:
-[Canal: Isabel Pareja | Vídeo: "Saturno en Casa 8"]
-"...cuando saturno transita la casa ocho nos encontramos con..."
+### Por qué `get_collection` y no `get_or_create_collection`
 
-[Canal: OtroAstrólogo | Vídeo: "Tránsitos de Saturno"]
-"...el tránsito de saturno por la octava casa suele coincidir..."
+`get_or_create_collection` crea la colección si no existe. Si la crea en una sesión nueva, puede hacerlo sin el metadato `{"hnsw:space": "cosine"}` → la BD usa distancia euclidiana → el retrieval semántico falla silenciosamente.
 
-PREGUNTA: ¿Qué significa Saturno en casa 8?
-```
+`get_collection` lanza una excepción si la colección no existe, lo que es correcto — si no existe hay que reindexar explícitamente.
+
+---
+
+## 🗺️ Roadmap
+
+### ✅ v1 — MVP (commit `a7aada3`)
+- [x] Descarga masiva con yt-dlp
+- [x] Soporte VTT nativo
+- [x] ChromaDB + embeddings MiniLM
+- [x] Interfaz Gradio básica
+
+### ✅ v2 — Limpieza (commits `5f1a2c6`, `1be79a0`)
+- [x] Deduplicación de texto VTT triplicado
+- [x] Normalización: unidecode + lowercase + filtro fillers
+- [x] Chunks más pequeños (120 palabras)
+
+### ✅ v3 — e5-large + RAG (commits `c39c614`, `238d145`, `3e69807`)
+- [x] Upgrade a multilingual-e5-large (1024 dims)
+- [x] Protocolo de prefijos e5
+- [x] Pipeline RAG completo con LM Studio / Qwen
+- [x] Filtro de chunks cortos
+
+### ✅ v4 — Self-check + corrección completa (commit `204885f`)
+- [x] `startup_check()` integrado — valida BD + modelo + retrieval al inicio
+- [x] `normalize_embeddings=True` en los 4 puntos del pipeline
+- [x] `get_collection` en lugar de `get_or_create_collection`
+- [x] Puerto fijo 7860
+- [x] Reescritura limpia del archivo principal
+
+### 🔄 v5 — Calidad de respuesta (pendiente)
+- [ ] Cambio de modelo LLM: Qwen-coder → modelo de conversación general
+- [ ] Reranking de fragmentos por relevancia (cross-encoder)
+- [ ] Filtros en UI: por canal, por fecha de vídeo
+- [ ] Deduplicación de fragmentos muy similares en el contexto RAG
+
+### 🔮 v6 — Funcionalidades avanzadas
+- [ ] Whisper para vídeos sin subtítulos automáticos
+- [ ] Resumen automático por vídeo al indexar
+- [ ] Clustering semántico de temas
+- [ ] Comparativa de perspectivas entre astrólogos sobre un mismo tema
+- [ ] Exportación de fragmentos a Markdown/PDF
+- [ ] Soporte podcasts (MP3/RSS)
+
 
 ---
 
@@ -289,10 +462,21 @@ PREGUNTA: ¿Qué significa Saturno en casa 8?
 
 ```
 AstroExtracto/
-├── astro_corpus_ui.py      ← aplicación principal (Gradio)
-├── requirements.txt        ← dependencias
+├── astro_corpus_ui.py      ← aplicación principal (Gradio) — v4
+├── requirements.txt        ← dependencias Python
 ├── README.md               ← este archivo
-├── .gitignore              ← excluye corpus y bases de datos
+├── .gitignore              ← excluye corpus, BD y modelos
+│
+├── scripts/
+│   ├── README.md           ← documentación del pipeline de scripts
+│   ├── reindex_e5.py       ← reindexado con e5-large ← USAR ESTE
+│   ├── check_chroma.py     ← diagnóstico rápido BD
+│   ├── check_chroma2.py    ← inspección de calidad
+│   ├── test_busqueda.py    ← validación post-reindexado
+│   ├── rag_query.py        ← CLI standalone RAG
+│   ├── demo_embeddings.py  ← demo educativa
+│   ├── reindex_limpio.py   ← v1 histórico (MiniLM)
+│   └── reindex_v2.py       ← v2 histórico (MiniLM)
 │
 ├── corpus_astro/           ← subtítulos descargados (NO en git)
 │   └── NombreCanal/
@@ -300,129 +484,64 @@ AstroExtracto/
 │       └── fecha_id_titulo.info.json
 │
 ├── astro_knowledge.db      ← SQLite metadatos (NO en git)
-└── chroma_db/              ← base vectorial (NO en git)
-    └── chroma.sqlite3
+└── chroma_db/              ← base vectorial e5-large 1024d (NO en git)
 ```
 
 ---
 
-## ⚙️ Configuración
+## 🤔 FAQ
 
-Las rutas y parámetros principales están en la cabecera de `astro_corpus_ui.py`:
+**¿Por qué el retrieval devolvía resultados incorrectos si no había error?**
 
-```python
-DIRECTORIO   = "./corpus_astro"     # dónde se guardan los subtítulos
-DB_PATH      = "./astro_knowledge.db"  # SQLite de metadatos
-CHROMA_PATH  = "./chroma_db"        # base vectorial
-MODELO_NAME  = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-CHUNK_SIZE   = 500    # caracteres por fragmento
-CHUNK_OVERLAP= 50     # solapamiento entre fragmentos
-```
+Los bugs de embeddings son silenciosos: el sistema devuelve resultados, pero son los incorrectos. Sin error en consola, sin excepción. La única forma de detectarlos es verificar las dimensiones explícitamente y hacer un test de retrieval con ground truth conocido (un vídeo cuyo título conoces y puedes verificar). Por eso el self-check es parte permanente del código en v4.
 
-Para mejorar la calidad de búsqueda puedes experimentar con:
-- `CHUNK_SIZE = 800` — fragmentos más grandes, más contexto por resultado
-- `CHUNK_OVERLAP = 100` — más solapamiento, menos pérdida en fronteras
-- Modelo alternativo: `paraphrase-multilingual-mpnet-base-v2` (más lento pero mejor)
+**¿Por qué los procesos se acumulaban en puertos 7861, 7862, 7863...?**
 
+Gradio, al encontrar el puerto 7860 ocupado por un proceso anterior no terminado correctamente, escala al siguiente disponible. Con `PORT = 7860` y `server_name="127.0.0.1"` en `app.launch()`, el proceso falla si el puerto está ocupado en lugar de escalar silenciosamente. Solución: matar los procesos Python antes de relanzar.
 
----
-
-## 🗺️ Roadmap
-
-### ✅ v1.0 — MVP (completado)
-- [x] Descarga masiva de subtítulos con yt-dlp
-- [x] Soporte VTT nativo (sin ffmpeg)
-- [x] Indexación en ChromaDB con embeddings multilingües
-- [x] SQLite para metadatos
-- [x] Interfaz Gradio con logs en tiempo real
-- [x] Búsqueda semántica básica
-
-### 🔄 v1.5 — Calidad de búsqueda (en desarrollo)
-- [ ] RAG completo con Claude API — respuestas elaboradas con citas
-- [ ] Reranking de resultados por relevancia
-- [ ] Filtros por canal, fecha, rango temporal
-- [ ] Deduplicación de fragmentos muy similares
-- [ ] Diccionario de correcciones para terminología astrológica
-
-### 🔮 v2.0 — Funcionalidades avanzadas
-- [ ] Soporte Whisper para vídeos sin subtítulos automáticos
-- [ ] Resumen automático por vídeo al indexar
-- [ ] Mapa conceptual de temas (clustering semántico)
-- [ ] Comparativa de perspectivas entre astrólogos sobre un mismo tema
-- [ ] Exportación de fragmentos a Markdown/PDF
-- [ ] Soporte para podcasts (MP3/RSS)
-
-### 💡 Ideas futuras
-- [ ] Integración con software de cartas natales (Astro.com API)
-- [ ] Contextualización automática: dado un tránsito, buscar qué dice el corpus
-- [ ] Timeline: qué dijo cada canal sobre un evento astrológico específico
-
----
-
-## 🤔 Preguntas frecuentes
-
-**¿Por qué las búsquedas a veces no son muy precisas?**
-
-La calidad depende de varios factores:
-1. **Calidad de los subtítulos automáticos** — YouTube genera subtítulos sin puntuación y con errores fonéticos en términos técnicos astrológicos
-2. **Tamaño del corpus** — con más vídeos indexados, hay más posibilidades de encontrar el fragmento relevante
-3. **Formulación de la consulta** — probar variaciones de la misma pregunta mejora los resultados
-4. **Modelo de embeddings** — el modelo actual es eficiente pero no especializado en astrología
-
-La fase RAG (v1.5) mejorará notablemente la experiencia porque el LLM sintetizará varios fragmentos en una respuesta coherente.
-
-**¿Los datos salen de mi ordenador?**
-
-Solo en dos casos opcionales:
-- Al descargar subtítulos de YouTube (tráfico hacia los servidores de Google)
-- Al usar la integración con Claude API para RAG (los fragmentos recuperados se envían a Anthropic)
-
-Todo lo demás — almacenamiento, indexación, búsqueda — es 100% local.
-
-**¿Cuánto espacio ocupa?**
+**¿Cuánto espacio ocupa todo?**
 
 | Elemento | Tamaño aproximado |
 |---|---|
-| Modelo de embeddings | ~500 MB (se descarga una vez) |
-| 300 vídeos (subtítulos) | ~50-100 MB |
-| ChromaDB (300 vídeos) | ~200-400 MB |
-| SQLite (300 vídeos) | ~5 MB |
+| Modelo e5-large | ~2.1 GB |
+| 277 VTTs (corpus Isabel Pareja) | ~40 MB |
+| ChromaDB (10.363 chunks, 1024 dims) | ~400 MB |
+| SQLite metadatos | ~5 MB |
 
 **¿Funciona en macOS/Linux?**
 
-Sí. Las rutas del código están configuradas para Windows por defecto. En macOS/Linux cambia `DIRECTORIO`, `DB_PATH` y `CHROMA_PATH` a rutas Unix (`/home/usuario/...`).
+Sí. Cambiar las rutas absolutas de Windows en la cabecera de `astro_corpus_ui.py` a rutas Unix.
 
-**¿Puedo añadir canales en inglés?**
+**¿Puedo usar otro LLM además de Qwen?**
 
-Sí, el modelo `paraphrase-multilingual-MiniLM-L12-v2` soporta múltiples idiomas. Cambiar `--sub-lang es` a `--sub-lang en` en el comando yt-dlp.
+Sí. Cambia `LM_MODEL` a cualquier modelo disponible en LM Studio. Para texto generativo (no código) se recomienda un modelo conversacional como `Mistral-7B-Instruct` o `Llama-3-8B-Instruct`.
 
 ---
 
 ## ⚖️ Consideraciones legales y éticas
 
-- Este proyecto descarga subtítulos generados automáticamente por YouTube
-- El uso es **estrictamente personal** — no redistribuyas el corpus ni lo uses comercialmente
-- Los subtítulos automáticos son generados por los propios sistemas de Google, no son obra directa del creador de contenido en el sentido técnico, pero el contenido de los vídeos sí lo es
-- Respeta los términos de servicio de YouTube
-- Si un creador solicita que elimines su contenido de tu base de datos local, hazlo
+- El proyecto descarga subtítulos generados automáticamente por YouTube
+- Uso **estrictamente personal** — no redistribuir el corpus
+- Respetar los términos de servicio de YouTube
+- Si un creador solicita eliminación de su contenido de tu BD local, hazlo
 
 ---
 
-## 🙏 Créditos y agradecimientos
+## 🙏 Créditos
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — el mejor descargador de vídeo/subtítulos
-- [ChromaDB](https://github.com/chroma-core/chroma) — base de datos vectorial local
-- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) — embeddings multilingües
-- [Gradio](https://github.com/gradio-app/gradio) — interfaces web para ML sin configuración
-- [Anthropic Claude](https://anthropic.com) — LLM para la fase RAG
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — descarga de subtítulos
+- [ChromaDB](https://github.com/chroma-core/chroma) — base vectorial local
+- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) — embeddings
+- [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) — modelo de embeddings
+- [Gradio](https://github.com/gradio-app/gradio) — interfaz web
+- [LM Studio](https://lmstudio.ai) — servidor LLM local
 
 ---
 
 ## 📄 Licencia
 
-MIT License — úsalo, modifícalo, compártelo. Ver [LICENSE](LICENSE).
+MIT License — úsalo, modifícalo, compártelo.
 
 ---
 
 *Proyecto desarrollado para investigación astrológica personal.*
-*"La astrología es el lenguaje del tiempo." — Anónimo*
