@@ -213,58 +213,79 @@ def rag_consultar(pregunta, top_k):
     yield "Buscando fragmentos relevantes..."
     q_norm = normalizar_query(pregunta)
     emb = modelo.encode([q_norm], normalize_embeddings=True).tolist()
-    res = col.query(query_embeddings=emb, n_results=int(top_k))
-    docs  = res["documents"][0]
-    metas = res["metadatas"][0]
+    # Recuperar más de los pedidos para poder filtrar los cortos
+    res = col.query(query_embeddings=emb, n_results=int(top_k) + 4)
+    docs_raw  = res["documents"][0]
+    metas_raw = res["metadatas"][0]
 
-    if not docs:
-        yield "Sin resultados en el corpus."
+    # Filtrar chunks demasiado cortos (solapamientos truncados)
+    pares = [(d, m) for d, m in zip(docs_raw, metas_raw) if len(d.strip()) >= 150]
+    pares = pares[:int(top_k)]  # quedarse con los pedidos tras filtrar
+
+    if not pares:
+        yield "Sin resultados útiles en el corpus."
         return
 
     # Construir contexto
     contexto = ""
     fuentes  = []
-    for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+    vistos   = set()
+    for i, (doc, meta) in enumerate(pares, 1):
         titulo = meta.get("titulo", "?")[:70]
-        contexto += f"\n[Fragmento {i} — {titulo}]\n{doc}\n"
-        fuentes.append(f"  {i}. {titulo}")
-        if meta.get("url"):
-            fuentes.append(f"     {meta['url']}")
+        contexto += f"\n[{i}. {titulo}]\n{doc}\n"
+        url = meta.get("url", "")
+        clave = titulo[:50]
+        if clave not in vistos:
+            vistos.add(clave)
+            entrada = f"  {len(vistos)}. {titulo}"
+            if url:
+                entrada += f"\n     {url}"
+            fuentes.append(entrada)
 
-    prompt = f"""Eres un asistente especializado en astrologia terapeutica y evolutiva, basado en las ensenanzas de Isabel Pareja.
-Responde la siguiente pregunta usando UNICAMENTE los fragmentos proporcionados.
-Si los fragmentos no contienen informacion suficiente dilo claramente. No inventes ni extrapoles.
-Responde en espanol, de forma clara y estructurada.
+    prompt = f"""Eres un asistente experto en astrología terapéutica y evolutiva basado en las enseñanzas de Isabel Pareja.
 
-FRAGMENTOS:
+Tu tarea: responder la pregunta del usuario usando el contenido de los fragmentos de transcripción que se te dan.
+
+INSTRUCCIONES:
+- Lee cada fragmento completo y extrae toda la información relevante que contenga.
+- Sintetiza lo que Isabel Pareja dice sobre el tema en cuestión.
+- Si varios fragmentos hablan de lo mismo, integra la información.
+- Si algún fragmento no es relevante para la pregunta, ignóralo.
+- Responde en español, de forma clara y directa.
+- No menciones los números de fragmento en tu respuesta.
+- Si genuinamente no hay información sobre el tema, dilo en una sola frase.
+
+FRAGMENTOS DE TRANSCRIPCIÓN:
 {contexto}
 
 PREGUNTA: {pregunta}
 
 RESPUESTA:"""
 
-    yield f"Consultando {LM_MODEL}...\n"
+    yield f"Consultando {LM_MODEL} ({len(pares)} fragmentos)...\n"
 
-    # Llamada a LM Studio (sin streaming para simplicidad)
     try:
         import urllib.request as ur
         payload = json.dumps({
             "model": LM_MODEL,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_tokens": 1000,
+            "temperature": 0.35,
+            "max_tokens": 1500,
             "stream": False
         }).encode("utf-8")
         req = ur.Request(LM_STUDIO, data=payload, headers={"Content-Type": "application/json"})
-        with ur.urlopen(req, timeout=180) as resp:
+        with ur.urlopen(req, timeout=240) as resp:
             data = json.loads(resp.read())
         respuesta = data["choices"][0]["message"]["content"].strip()
     except Exception as ex:
-        yield f"Error LM Studio: {ex}\n\nAsegurate de que LM Studio esta arrancado en {LM_STUDIO}"
+        yield f"Error LM Studio: {ex}\n\nAsegúrate de que LM Studio está arrancado en {LM_STUDIO}"
         return
 
-    salida = f"PREGUNTA: {pregunta}\n{'='*60}\n\n{respuesta}\n\n{'─'*60}\nFUENTES CONSULTADAS:\n" + "\n".join(fuentes)
+    separador = "=" * 60
+    linea     = "─" * 60
+    salida = f"PREGUNTA: {pregunta}\n{separador}\n\n{respuesta}\n\n{linea}\nFUENTES CONSULTADAS:\n" + "\n".join(fuentes)
     yield salida
+
 def estado():
     try:
         con     = sqlite3.connect(DB_PATH)
@@ -328,8 +349,8 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
             app.load(fn=estado, outputs=est)
 
 if __name__ == "__main__":
-    print("\nAstro Corpus v3 arrancando en http://localhost:7862\n")
-    app.launch(server_port=7862, inbrowser=True)
+    print("\nAstro Corpus v3 arrancando en http://localhost:7863\n")
+    app.launch(server_port=7863, inbrowser=True)
 
 
 
