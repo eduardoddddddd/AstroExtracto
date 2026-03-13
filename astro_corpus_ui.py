@@ -19,7 +19,7 @@ _modelo     = None
 DIRECTORIO   = "C:/Users/Edu/Downloads/corpus_astro"
 DB_PATH      = "C:/Users/Edu/Downloads/astro_knowledge.db"
 CHROMA_PATH  = "C:/Users/Edu/Downloads/chroma_db"
-MODELO_NAME  = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+MODELO_NAME  = "intfloat/multilingual-e5-large"
 CHUNK_SIZE   = 500
 CHUNK_OVERLAP= 50
 
@@ -46,7 +46,7 @@ FILLER_QUERY = set(['eh','ah','oh','mm','bueno','pues','entonces','osea','nada',
 def normalizar_query(texto):
     texto = unidecode(texto.lower())
     palabras = [p for p in texto.split() if p not in FILLER_QUERY]
-    return ' '.join(palabras)
+    return 'query: ' + ' '.join(palabras)
 
 def init_sqlite():
     con = sqlite3.connect(DB_PATH)
@@ -249,7 +249,9 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
             app.load(fn=estado, outputs=est)
 
 if __name__ == "__main__":
-    print("\nAstro Corpus v3 arrancando en http://localhost:7860\n")
-    app.launch(server_port=7860, inbrowser=True)
+    print("\nAstro Corpus v3 arrancando en http://localhost:7861\n")
+    app.launch(server_port=7861, inbrowser=True)
+
+
 
 
