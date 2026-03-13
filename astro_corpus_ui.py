@@ -1,4 +1,4 @@
-"""
+﻿"""
 astro_corpus_ui.py  v3
 ----------------------
 Soporte VTT y SRT. Streaming real con Popen.
@@ -240,5 +240,6 @@ with gr.Blocks(title="🪐 Astro Corpus", theme=gr.themes.Base(), css=CSS) as ap
             app.load(fn=estado, outputs=est)
 
 if __name__ == "__main__":
-    print("\n🪐  Astro Corpus v3 arrancando en http://localhost:7860\n")
+    print("\nAstro Corpus v3 arrancando en http://localhost:7860\n")
     app.launch(server_port=7860, inbrowser=True)
+
