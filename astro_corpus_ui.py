@@ -24,7 +24,7 @@ CHUNK_SIZE   = 500
 CHUNK_OVERLAP= 50
 LM_STUDIO    = "http://127.0.0.1:1234/v1/chat/completions"
 LM_MODEL     = "qwen3-coder-30b-a3b-instruct"
-RAG_TOP_K    = 6
+RAG_TOP_K    = 8
 
 
 def limpiar_vtt(texto):
@@ -63,7 +63,7 @@ def get_col():
     global _chroma_col
     if _chroma_col is None:
         import chromadb
-        _chroma_col = chromadb.PersistentClient(path=CHROMA_PATH).get_or_create_collection("astro_corpus")
+        _chroma_col = chromadb.PersistentClient(path=CHROMA_PATH).get_collection("astro_corpus")
     return _chroma_col
 
 def get_modelo():
@@ -185,7 +185,7 @@ def consultar(pregunta, n):
     except Exception as ex:
         return f"❌  {ex}"
     pregunta_norm = normalizar_query(pregunta)
-    res = col.query(query_embeddings=modelo.encode([pregunta_norm]).tolist(), n_results=int(n))
+    res = col.query(query_embeddings=modelo.encode([pregunta_norm], normalize_embeddings=True).tolist(), n_results=int(n))
     if not res["documents"][0]:
         return "Sin resultados. ¿Has indexado algún canal?"
     out = f"🔍  «{pregunta}»\n{'═'*60}\n\n"
